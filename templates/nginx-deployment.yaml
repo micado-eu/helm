@@ -1,0 +1,104 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "micado.fullname" . }}
+  labels:
+    {{- include "micado.labels" . | nindent 4 }}
+spec:
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "micado.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      {{- with .Values.podAnnotations }}
+      annotations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      labels:
+        {{- include "micado.selectorLabels" . | nindent 8 }}
+    spec:
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      serviceAccountName: {{ include "micado.serviceAccountName" . }}
+      securityContext:
+        {{- toYaml .Values.podSecurityContext | nindent 8 }}
+      initContainers:
+        - image: {{ .Values.micado.migrant_image }}:{{ .Values.micado.migrant_tag }}
+          command: ["/bin/sh", "-c", {{.Values.frontend.initCommand}}] #"cp -R /data/* /tmp"
+          name: frontend-init
+          volumeMounts:
+          - name: frontend
+            mountPath:  {{.Values.frontend.mountPath}} #/tmp
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          ports:
+            - name: http
+              containerPort: 80
+              protocol: TCP
+          livenessProbe:
+            httpGet:
+              path: /
+              port: http
+          readinessProbe:
+            httpGet:
+              path: /
+              port: http
+          resources:
+            {{- toYaml .Values.resources | nindent 12 }}
+          volumeMounts:
+            - name: migrant
+              mountPath: /usr/share/nginx/html/migrants
+            - name: pa
+              mountPath: /usr/share/nginx/html/pa
+            - name: ngo
+              mountPath: /usr/share/nginx/html/ngo
+            - name: certs
+              mountPath: /usr/local/apache2/conf/ssl
+              readOnly: true
+            - name: httpd-conf-extra
+              mountPath: /usr/local/apache2/conf/extra/locations.conf
+              subPath: locations.conf
+            - name: httpd-conf-extra
+              mountPath: /usr/local/apache2/conf/extra/balancers.conf
+              subPath: balancers.conf
+      volumes:
+        - name: httpd-conf-extra
+          configMap:
+            name: httpd-conf-extra
+            items:
+              - key: locations.conf  # Name of the item we had used inside our ConfigMap (under data:)
+                path: locations.conf # Name of the file to be placed inside /etc
+              - key: balancers.conf  # Name of the item we had used inside our ConfigMap (under data:)
+                path: balancers.conf # Name of the file to be placed inside /etc
+        - name: migrant
+          emptyDir: {}
+        - name: pa
+          emptyDir: {}
+        - name: ngo
+          emptyDir: {}
+        - name: shibsocket
+          emptyDir: {}
+        - name: certs
+          secret:
+            secretName: certs-secret
+      {{- with .Values.nodeSelector }}
+      nodeSelector:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
